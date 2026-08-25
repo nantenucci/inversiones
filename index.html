@@ -73,7 +73,7 @@ html,body{min-height:100%;background:var(--gris);font-family:var(--sans);color:v
 .resumen-item .val.neg{color:var(--rojo)}
 
 /* ── FORM MOVIMIENTO ───────────────────────────────────────────────── */
-.form-mov{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr auto;gap:8px;align-items:end}
+.form-mov{display:grid;grid-template-columns:1fr .8fr .8fr 1fr 1fr 1fr auto;gap:8px;align-items:end}
 .form-mov .campo{display:flex;flex-direction:column;gap:3px}
 .form-mov label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--gris3)}
 .form-mov input,.form-mov select{border:1px solid var(--borde);border-radius:4px;padding:8px 9px;font-family:var(--sans);font-size:13px;color:var(--negro);background:var(--gris)}
@@ -82,6 +82,8 @@ html,body{min-height:100%;background:var(--gris);font-family:var(--sans);color:v
 .btn-add:hover{background:var(--azul2)}
 .btn-add:disabled{opacity:.55;cursor:wait}
 @media (max-width:760px){.form-mov{grid-template-columns:1fr 1fr}}
+.pill.ars{background:var(--azul-l);color:var(--azul2)}
+.pill.usd{background:var(--verde-l);color:var(--verde)}
 
 /* ── TABLAS ────────────────────────────────────────────────────────── */
 table{width:100%;border-collapse:collapse}
@@ -246,7 +248,7 @@ td.neg{color:var(--rojo);font-weight:600}
           <input type="date" id="m-fecha">
         </div>
         <div class="campo">
-          <label>Ticker</label>
+          <label>Ticker / Fondo</label>
           <input type="text" id="m-ticker" placeholder="GOOGL" style="text-transform:uppercase">
         </div>
         <div class="campo">
@@ -257,11 +259,18 @@ td.neg{color:var(--rojo);font-weight:600}
           </select>
         </div>
         <div class="campo">
+          <label>Moneda</label>
+          <select id="m-moneda" onchange="actualizarLabelPrecio()">
+            <option value="ARS">ARS (CEDEAR/acción)</option>
+            <option value="USD">USD (fondo/dólares)</option>
+          </select>
+        </div>
+        <div class="campo">
           <label>Cantidad</label>
           <input type="number" id="m-cantidad" step="any" placeholder="0">
         </div>
         <div class="campo">
-          <label>Precio ARS</label>
+          <label id="lbl-precio">Precio ARS</label>
           <input type="number" id="m-precio" step="any" placeholder="0.00">
         </div>
         <button class="btn-add" id="btn-add-mov" onclick="agregarMovimiento()">+ Agregar</button>
@@ -274,8 +283,8 @@ td.neg{color:var(--rojo);font-weight:600}
         <table>
           <thead>
             <tr>
-              <th>Fecha</th><th>Ticker</th><th>Tipo</th>
-              <th class="num">Cantidad</th><th class="num">Precio ARS</th><th class="num">Total ARS</th><th></th>
+              <th>Fecha</th><th>Ticker</th><th>Tipo</th><th>Moneda</th>
+              <th class="num">Cantidad</th><th class="num">Precio</th><th class="num">Total</th><th></th>
             </tr>
           </thead>
           <tbody id="tbl-movimientos"><tr><td colspan="7" class="cargando">Cargando…</td></tr></tbody>
@@ -374,20 +383,29 @@ async function cargarMovimientos() {
 function renderMovimientos() {
   const tbody = document.getElementById('tbl-movimientos');
   if (!movimientos.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="vacio">Todavía no cargaste movimientos</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="vacio">Todavía no cargaste movimientos</td></tr>';
     return;
   }
-  tbody.innerHTML = movimientos.map(m => `
+  tbody.innerHTML = movimientos.map(m => {
+    const fmt = m.moneda === 'USD' ? fmtUSD : fmtARS;
+    return `
     <tr>
       <td>${fmtFecha(m.fecha)}</td>
       <td><b>${escH(m.ticker)}</b></td>
       <td><span class="pill ${m.tipo}">${m.tipo}</span></td>
+      <td><span class="pill ${m.moneda.toLowerCase()}">${m.moneda}</span></td>
       <td class="num">${Number(m.cantidad).toLocaleString('es-AR')}</td>
-      <td class="num">${fmtARS(m.precio_ars)}</td>
-      <td class="num">${fmtARS(m.cantidad * m.precio_ars)}</td>
+      <td class="num">${fmt(m.precio)}</td>
+      <td class="num">${fmt(m.cantidad * m.precio)}</td>
       <td><button class="btn-del" onclick="borrarMovimiento('${m.id}')" title="Borrar">✕</button></td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
+}
+
+function actualizarLabelPrecio() {
+  const moneda = document.getElementById('m-moneda').value;
+  document.getElementById('lbl-precio').textContent = moneda === 'USD' ? 'Precio USD' : 'Precio ARS';
 }
 
 async function agregarMovimiento() {
@@ -395,6 +413,7 @@ async function agregarMovimiento() {
   const fecha    = document.getElementById('m-fecha').value;
   const ticker   = document.getElementById('m-ticker').value.trim().toUpperCase();
   const tipo     = document.getElementById('m-tipo').value;
+  const moneda   = document.getElementById('m-moneda').value;
   const cantidad = parseFloat(document.getElementById('m-cantidad').value);
   const precio   = parseFloat(document.getElementById('m-precio').value);
 
@@ -405,7 +424,7 @@ async function agregarMovimiento() {
 
   btn.disabled = true;
   const { error } = await db.from('movimientos_inversiones').insert({
-    fecha, ticker, tipo, cantidad, precio_ars: precio
+    fecha, ticker, tipo, moneda, cantidad, precio
   });
   btn.disabled = false;
 
@@ -484,27 +503,36 @@ async function cargarPrecios() {
 
 // ── CÁLCULO Y RENDER PORTAFOLIO ───────────────────────────────────────────
 function calcularPosiciones() {
-  const porTicker = {};
+  const porClave = {};
   movimientos.forEach(m => {
-    if (!porTicker[m.ticker]) porTicker[m.ticker] = { cantidad: 0, costoTotal: 0, cantidadComprada: 0 };
-    const p = porTicker[m.ticker];
+    const clave = m.ticker + '|' + m.moneda;
+    if (!porClave[clave]) porClave[clave] = { ticker: m.ticker, moneda: m.moneda, cantidad: 0, costoTotal: 0, cantidadComprada: 0 };
+    const p = porClave[clave];
     if (m.tipo === 'compra') {
       p.cantidad += Number(m.cantidad);
-      p.costoTotal += Number(m.cantidad) * Number(m.precio_ars);
+      p.costoTotal += Number(m.cantidad) * Number(m.precio);
       p.cantidadComprada += Number(m.cantidad);
     } else {
       p.cantidad -= Number(m.cantidad);
     }
   });
 
-  const posiciones = Object.entries(porTicker)
-    .filter(([, p]) => p.cantidad > 0.0000001)
-    .map(([ticker, p]) => {
+  const posiciones = Object.values(porClave)
+    .filter(p => p.cantidad > 0.0000001)
+    .map(p => {
       const ppc = p.cantidadComprada > 0 ? p.costoTotal / p.cantidadComprada : 0;
-      const precioActual = preciosMap[ticker] ?? null;
-      const totalARS = precioActual != null ? p.cantidad * precioActual : null;
-      const gananciaPct = (precioActual != null && ppc > 0) ? ((precioActual - ppc) / ppc) * 100 : null;
-      return { ticker, cantidad: p.cantidad, ppc, precioActual, totalARS, gananciaPct };
+      if (p.moneda === 'ARS') {
+        const precioActual = preciosMap[p.ticker] ?? null;
+        const totalARS = precioActual != null ? p.cantidad * precioActual : null;
+        const totalUSD = (totalARS != null && dolarMEP) ? totalARS / dolarMEP : null;
+        const gananciaPct = (precioActual != null && ppc > 0) ? ((precioActual - ppc) / ppc) * 100 : null;
+        return { ticker: p.ticker, moneda: p.moneda, cantidad: p.cantidad, ppc, precioActual, totalARS, totalUSD, gananciaPct, sinCotizacion: false };
+      } else {
+        // Fondos/activos en USD: sin API de cotización en vivo disponible — se valorizan al costo (PPC)
+        const totalUSD = p.cantidad * ppc;
+        const totalARS = dolarMEP ? totalUSD * dolarMEP : null;
+        return { ticker: p.ticker, moneda: p.moneda, cantidad: p.cantidad, ppc, precioActual: ppc, totalARS, totalUSD, gananciaPct: null, sinCotizacion: true };
+      }
     });
 
   return posiciones;
@@ -516,9 +544,12 @@ function renderPortafolio() {
   const totalCarteraARS = totalPosicionesARS + efectivoARS;
   const totalCarteraUSD = dolarMEP ? totalCarteraARS / dolarMEP : null;
 
-  const costoTotalPosiciones = posiciones.reduce((s, p) => s + p.cantidad * p.ppc, 0);
-  const gananciaARS = totalPosicionesARS - costoTotalPosiciones;
-  const gananciaPctTotal = costoTotalPosiciones > 0 ? (gananciaARS / costoTotalPosiciones) * 100 : null;
+  const costoTotalPosicionesARS = posiciones.reduce((s, p) => {
+    const costoARS = p.moneda === 'USD' ? p.cantidad * p.ppc * (dolarMEP || 0) : p.cantidad * p.ppc;
+    return s + costoARS;
+  }, 0);
+  const gananciaARS = totalPosicionesARS - costoTotalPosicionesARS;
+  const gananciaPctTotal = costoTotalPosicionesARS > 0 ? (gananciaARS / costoTotalPosicionesARS) * 100 : null;
 
   document.getElementById('r-total-ars').textContent = fmtARS(totalCarteraARS);
   document.getElementById('r-total-usd').textContent = totalCarteraUSD != null ? fmtUSD(totalCarteraUSD) : '—';
@@ -535,15 +566,18 @@ function renderPortafolio() {
 
   tbody.innerHTML = posiciones.map(p => {
     const peso = totalCarteraARS > 0 && p.totalARS != null ? (p.totalARS / totalCarteraARS) * 100 : null;
-    const totalUSD = (p.totalARS != null && dolarMEP) ? p.totalARS / dolarMEP : null;
+    const fmt = p.moneda === 'USD' ? fmtUSD : fmtARS;
+    const precioActualTxt = p.precioActual == null ? '<span style="color:var(--gris3)">s/d</span>'
+      : p.sinCotizacion ? fmt(p.precioActual) + ' <span style="color:var(--gris3);font-size:10px">(al costo)</span>'
+      : fmt(p.precioActual);
     return `
       <tr>
-        <td><b>${escH(p.ticker)}</b></td>
+        <td><b>${escH(p.ticker)}</b> <span class="pill ${p.moneda.toLowerCase()}">${p.moneda}</span></td>
         <td class="num">${p.cantidad.toLocaleString('es-AR')}</td>
-        <td class="num">${fmtARS(p.ppc)}</td>
-        <td class="num">${p.precioActual != null ? fmtARS(p.precioActual) : '<span style="color:var(--gris3)">s/d</span>'}</td>
+        <td class="num">${fmt(p.ppc)}</td>
+        <td class="num">${precioActualTxt}</td>
         <td class="num">${p.totalARS != null ? fmtARS(p.totalARS) : '—'}</td>
-        <td class="num">${totalUSD != null ? fmtUSD(totalUSD) : '—'}</td>
+        <td class="num">${p.totalUSD != null ? fmtUSD(p.totalUSD) : '—'}</td>
         <td class="num ${p.gananciaPct == null ? '' : p.gananciaPct >= 0 ? 'pos' : 'neg'}">${p.gananciaPct != null ? fmtPct(p.gananciaPct) : '—'}</td>
         <td class="num">${peso != null ? peso.toFixed(1) + '%' : '—'}</td>
       </tr>
