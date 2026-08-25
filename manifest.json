@@ -1,0 +1,13 @@
+{
+  "name": "Inversiones — Antenucci Penal",
+  "short_name": "Inversiones",
+  "start_url": "/inversiones/",
+  "scope": "/inversiones/",
+  "display": "standalone",
+  "background_color": "#F4F4F2",
+  "theme_color": "#1B3A6B",
+  "icons": [
+    { "src": "inversiones-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "inversiones-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
